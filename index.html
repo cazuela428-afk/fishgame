@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Fish, blue life</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+        
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background-color: #000; overflow: hidden;
+            font-family: 'Press Start 2P', monospace;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        canvas {
+            display: block;
+            width: 100%; height: 100%;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-crisp-edges;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+
+        .screen {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: white; text-align: center; pointer-events: none;
+        }
+
+        .active { pointer-events: auto; }
+        .hidden { display: none !important; }
+
+        /* Menu */
+        #menu { background-color: #0a3a6a; }
+        h1 { font-size: 40px; text-shadow: 4px 4px 0 #000; color: #4fa4ff; margin-bottom: 40px; line-height: 1.5;}
+        
+        button {
+            font-family: 'Press Start 2P', monospace;
+            background: #fff; color: #000; border: 4px solid #000;
+            padding: 15px 30px; font-size: 20px; cursor: pointer;
+            box-shadow: 4px 4px 0 #000; text-transform: uppercase;
+            margin: 10px; transition: transform 0.1s;
+        }
+        button:active { transform: translate(4px, 4px); box-shadow: 0 0 0 #000; }
+
+        /* UI */
+        #gameUI { justify-content: space-between; align-items: flex-start; padding: 20px; box-sizing: border-box; pointer-events: none;}
+        .stats {
+            background: rgba(0,0,0,0.7); padding: 10px; border: 2px solid white;
+            font-size: 12px; color: white; text-align: left; line-height: 1.8;
+            pointer-events: auto;
+        }
+
+        /* D-PAD */
+        #dpad {
+            position: absolute; bottom: 30px; left: 30px;
+            width: 150px; height: 150px; pointer-events: auto;
+        }
+        .dir-btn {
+            position: absolute; width: 50px; height: 50px; background: rgba(255,255,255,0.2);
+            border: 2px solid white; border-radius: 5px; color: white;
+            font-size: 24px; display: flex; justify-content: center; align-items: center;
+        }
+        #btn-up { top: 0; left: 50px; }
+        #btn-down { bottom: 0; left: 50px; }
+        #btn-left { top: 50px; left: 0; }
+        #btn-right { top: 50px; right: 0; }
+
+        /* Species Screen */
+        #speciesScreen { background-color: #111; justify-content: flex-start; padding-top: 50px; overflow-y: auto; pointer-events: auto;}
+        .species-list { width: 90%; max-height: 75%; overflow-y: auto; text-align: left; font-size: 10px; margin-bottom: 20px;}
+        .species-card { border: 2px dashed #555; padding: 10px; margin-bottom: 10px; display: flex; align-items: center; gap: 15px; background: #000; line-height: 1.5;}
+        .species-canvas { width: 96px; height: 96px; image-rendering: pixelated; flex-shrink: 0;}
+
+        #eggScreen { background: transparent; cursor: pointer; pointer-events: auto;}
+    </style>
+</head>
+<body>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="menu" class="screen active">
+        <h1>Fish, blue life</h1>
+        <button onclick="startGame()">Life</button>
+    </div>
+
+    <div id="gameUI" class="screen hidden">
+        <div class="stats">
+            Generations: <span id="ui-gen">1</span><br>
+            Record: <span id="ui-rec">1</span><br>
+            Food: <span id="ui-food">0</span>/10
+        </div>
+        <div id="dpad">
+            <div class="dir-btn" id="btn-up">↑</div>
+            <div class="dir-btn" id="btn-down">↓</div>
+            <div class="dir-btn" id="btn-left">←</div>
+            <div class="dir-btn" id="btn-right">→</div>
+        </div>
+    </div>
+
+    <div id="eggScreen" class="screen hidden" onclick="tapEgg()">
+        <h2 style="text-shadow: 2px 2px 0 #000;">Tap to hatch!</h2>
+    </div>
+
+    <div id="gameOver" class="screen hidden" style="background: rgba(0,0,0,0.8); pointer-events: auto;">
+        <h1 style="color: #ff4f4f;">Game over, life is Dangerous</h1>
+        <div>
+            <button onclick="startGame()">Live again</button>
+            <button onclick="showSpecies()">Species sighted</button>
+            <button onclick="toMenu()">Back to menu</button>
+        </div>
+    </div>
+
+    <div id="speciesScreen" class="screen hidden">
+        <h2 style="color: #ffd700;">Species Sighted</h2>
+        <div class="species-list" id="s-list"></div>
+        <button onclick="hideSpecies()">Back</button>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.addEventListener('resize', resize);
+    resize();
+
+    const PIXEL_SIZE = 3; 
+    const CHUNK_SIZE = 1200;
+    const WATER_SURFACE = -600;
+    const FLOOR_DEPTH = 800;
+    
+    const COLORS = {
+        white: '#ffffff', red: '#ff3b3b', blue: '#3b7aff', green: '#3bff68', 
+        yellow: '#fce803', purple: '#b13bff', orange: '#ff9d3b', pink: '#ff3bcf',
+        cyan: '#3beeff', lime: '#a8ff3b', grey: '#888888', darkred: '#8a0a0a'
+    };
+    const COLOR_KEYS = Object.keys(COLORS);
+    
+    let gameState = 'MENU'; 
+    let frame = 0;
+    let recordGen = localStorage.getItem('fishRecord') || 1;
+    let generations = 1;
+    let eggTaps = 0;
+    let camera = { x: 0, y: 0 };
+    
+    const keys = { up: false, down: false, left: false, right: false };
+    
+    const bindBtn = (id, key) => {
+        const el = document.getElementById(id);
+        const press = (e) => { e.preventDefault(); keys[key] = true; };
+        const release = (e) => { e.preventDefault(); keys[key] = false; };
+        el.addEventListener('touchstart', press, {passive: false});
+        el.addEventListener('mousedown', press);
+        el.addEventListener('touchend', release, {passive: false});
+        el.addEventListener('mouseup', release);
+        el.addEventListener('mouseleave', release);
+    };
+    bindBtn('btn-up', 'up'); bindBtn('btn-down', 'down');
+    bindBtn('btn-left', 'left'); bindBtn('btn-right', 'right');
+    
+    window.addEventListener('keydown', e => {
+        if(e.key === 'ArrowUp' || e.key === 'w') keys.up = true;
+        if(e.key === 'ArrowDown' || e.key === 's') keys.down = true;
+        if(e.key === 'ArrowLeft' || e.key === 'a') keys.left = true;
+        if(e.key === 'ArrowRight' || e.key === 'd') keys.right = true;
+    });
+    window.addEventListener('keyup', e => {
+        if(e.key === 'ArrowUp' || e.key === 'w') keys.up = false;
+        if(e.key === 'ArrowDown' || e.key === 's') keys.down = false;
+        if(e.key === 'ArrowLeft' || e.key === 'a') keys.left = false;
+        if(e.key === 'ArrowRight' || e.key === 'd') keys.right = false;
+    });
+
+    const FISH_TEMPLATES = [
+        [ // 0: Standard
+            "    22222     ",
+            "   2211122    ",
+            "  321111122   ",
+            " 33211111122  ",
+            "3332111011122 ",
+            " 33211111122  ",
+            "  321111122   ",
+            "   2211122    ",
+            "    22222     "
+        ],
+        [ // 1: Elongated
+            "   3332222222222222   ",
+            "  333221111111111122  ",
+            " 33322111111111011122 ",
+            "  333221111111111122  ",
+            "   3332222222222222   "
+        ],
+        [ // 2: Round/Puffer
+            "      22222      ",
+            "    222111222    ",
+            "   22111111122   ",
+            "  3211111111122  ",
+            " 332111110111122 ",
+            "  3211111111122  ",
+            "   22111111122   ",
+            "    222111222    ",
+            "      22222      "
+        ],
+        [ // 3: Tiny
+            "   1111   ",
+            " 3311111  ",
+            "333110111 ",
+            " 3311111  ",
+            "   1111   "
+        ]
+    ];
+
+    const SHARK_SPRITE = [
+        "           111                  ",
+        "          11111                 ",
+        "         1111111                ",
+        "      1111111111111111          ",
+        " 333111111111111111111111       ",
+        "333331111111111111111111111     ",
+        " 3331111111111110111111111111   ",
+        "   111111111111111111111111111  ",
+        "    1111111  111111111   1111   ",
+        "     1111      11111            "
+    ];
+
+    const FOOD_TEMPLATES = [
+        [" 1 1 ", " 111 ", "111 1", "11111", " 111 "], // Coral
+        ["1 1 1", "11111", " 111 "], // Anemone
+        [" 11 ", "1001", "1001", " 11 "], // Sponge
+        [" 1 ", "11 ", " 11", " 1 ", "11 "] // Algae
+    ];
+
+    // Handcrafted 20 Species
+    const RAW_SPECIES = [
+        { name: "Great Blue Shark", t: 99, c1: "#4a6b8c", c2: "#4a6b8c", size: 4, speed: 3.5, beh: "shark", desc: "A massive, aggressive apex predator. If it spots you, it will ruthlessly chase you down. Considerably faster than most fish." },
+        { name: "Sand Goby", t: 1, c1: "yellow", c2: "grey", size: 1.2, speed: 1.5, beh: "bottom", desc: "A slender fish that spends its entire life hovering just inches above the sandy floor, sifting for microscopic nutrients." },
+        { name: "Sun Glider", t: 0, c1: "orange", c2: "yellow", size: 1.5, speed: 2, beh: "surface", desc: "Loves the warmth of the sun. It refuses to dive deep, permanently swimming near the water's surface." },
+        { name: "Neon Dasher", t: 3, c1: "cyan", c2: "blue", size: 0.8, speed: 4, beh: "skittish", desc: "An incredibly fast and paranoid little fish. The moment it detects any movement nearby, it darts away in a panic." },
+        { name: "Reef Stalker", t: 0, c1: "red", c2: "darkred", size: 1.8, speed: 3, beh: "territorial", desc: "Usually peaceful, but fiercely territorial. If you invade its personal space, it will aggressively chase you away, though it gives up easily." },
+        { name: "Kelp Thief", t: 1, c1: "green", c2: "lime", size: 1.3, speed: 1.8, beh: "thief", desc: "A nuisance to evolving fish. This opportunistic scavenger actively searches the reef for edible corals and algae, eating them before you can." },
+        { name: "Ghost Puffer", t: 2, c1: "white", c2: "grey", size: 1.6, speed: 0.8, beh: "camo", desc: "A slow-moving survivor. When larger creatures approach, its chromatophores activate, making it almost entirely transparent to avoid detection." },
+        { name: "Venomous Lionfish", t: 0, c1: "orange", c2: "red", size: 1.7, speed: 0.6, beh: "toxic", desc: "Beautiful but absolutely deadly. It won't chase you, but its spines are coated in lethal neurotoxins. Touching it means instant death." },
+        { name: "Curious Guppy", t: 3, c1: "pink", c2: "white", size: 0.9, speed: 2.2, beh: "follower", desc: "Highly social and incredibly nosey. It will often find you and follow you around at a safe distance just to observe what you are doing." },
+        { name: "Abyssal Snapper", t: 1, c1: "purple", c2: "blue", size: 1.5, speed: 2.5, beh: "erratic", desc: "Its brain structure causes it to swim in sudden, unpredictable, and chaotic bursts of direction. Very hard to track." },
+        { name: "Golden Flipper", t: 0, c1: "yellow", c2: "orange", size: 2.5, speed: 0.5, beh: "passive", desc: "A large, majestic, and peaceful fish. It wanders slowly and ignores completely everything happening around it." },
+        { name: "Spotted Cleaner", t: 3, c1: "white", c2: "blue", size: 0.7, speed: 2.8, beh: "follower", desc: "A tiny fish that usually cleans parasites off larger fish. It might mistake you for a client and follow you closely." },
+        { name: "Ruby Puffer", t: 2, c1: "red", c2: "darkred", size: 1.4, speed: 1.0, beh: "toxic", desc: "When threatened, it inflates. Its skin secretes a powerful poison. Bumping into this round fish is a fatal mistake." },
+        { name: "Cyan Sentinel", t: 0, c1: "cyan", c2: "white", size: 2.0, speed: 2.8, beh: "territorial", desc: "A proud guard of the reef. It claims a small area and will ruthlessly charge at any fish that dares to swim too close." },
+        { name: "Mud Drifter", t: 1, c1: "grey", c2: "yellow", size: 1.6, speed: 0.4, beh: "bottom", desc: "A remarkably lazy creature. It barely swims, preferring to let the gentle bottom currents push it along the sand." },
+        { name: "Coral Nibbler", t: 2, c1: "pink", c2: "red", size: 1.1, speed: 1.5, beh: "thief", desc: "Armed with a beak-like mouth, it scours the ocean floor looking for the exact same food you need to survive. A direct competitor." },
+        { name: "Striped Runner", t: 1, c1: "white", c2: "grey", size: 1.2, speed: 3.2, beh: "skittish", desc: "It trusts nothing. It spends its life darting away from shadows, rocks, and definitely you. You'll rarely get a good look at it." },
+        { name: "Tiny Dart", t: 3, c1: "lime", c2: "green", size: 0.5, speed: 4.5, beh: "erratic", desc: "The smallest and most hyperactive fish in the sea. It zips around aimlessly with boundless energy." },
+        { name: "Giant Sunfish", t: 2, c1: "grey", c2: "white", size: 3.5, speed: 0.3, beh: "passive", desc: "An absolute unit. A massive, disk-shaped giant that floats aimlessly in the mid-waters, oblivious to the world." },
+        { name: "Shadow Eel", t: 1, c1: "darkred", c2: "grey", size: 2.2, speed: 1.8, beh: "bottom", desc: "Slithers exclusively along the ocean floor. Its dark colors make it hard to spot against the sand until it's right under you." }
+    ];
+
+    const SPECIES_DB = RAW_SPECIES.map((s, index) => {
+        return {
+            id: index, name: s.name, desc: s.desc,
+            color1: s.c1, color2: s.c2,
+            size: s.size, speed: s.speed, behavior: s.beh,
+            sprite: s.t === 99 ? SHARK_SPRITE : FISH_TEMPLATES[s.t]
+        };
+    });
+    
+    const sightedSpecies = new Set();
+
+    let player;
+    let chunks = new Map();
+    let particles = [];
+    let npcs = [];
+    let egg = null;
+
+    class Particle {
+        constructor(x, y, vx, vy, color, life, size=1) {
+            this.x = x; this.y = y; this.vx = vx; this.vy = vy;
+            this.color = color; this.life = life; this.maxLife = life; this.size = size;
+        }
+        update() { this.x += this.vx; this.y += this.vy; this.life--; }
+        draw() {
+            ctx.fillStyle = this.color;
+            ctx.globalAlpha = Math.max(0, this.life / this.maxLife);
+            ctx.fillRect(this.x, this.y, this.size * PIXEL_SIZE, this.size * PIXEL_SIZE);
+            ctx.globalAlpha = 1;
+        }
+    }
+
+    function drawFishSprite(ctx, spriteArray, c1, c2, s, direction, alpha=1) {
+        let wOff = (spriteArray[0].length * s) / 2;
+        let hOff = (spriteArray.length * s) / 2;
+        let tailOffset = Math.sin(frame * 0.15) * (s * 1.5); 
+        
+        ctx.globalAlpha = alpha;
+
+        for(let r=0; r<spriteArray.length; r++) {
+            for(let c=0; c<spriteArray[r].length; c++) {
+                let char = spriteArray[r][c];
+                let drawX = c*s - wOff;
+                let drawY = r*s - hOff;
+                
+                if(char === '3') {
+                    drawX += tailOffset;
+                    ctx.fillStyle = COLORS[c1] || c1; ctx.fillRect(drawX, drawY, s, s);
+                } else if(char === '1') {
+                    ctx.fillStyle = COLORS[c1] || c1; ctx.fillRect(drawX, drawY, s, s);
+                } else if(char === '2') {
+                    ctx.fillStyle = COLORS[c2] || c2; ctx.fillRect(drawX, drawY, s, s);
+                } else if(char === '0') {
+                    ctx.fillStyle = 'black'; ctx.fillRect(drawX, drawY, s, s);
+                }
+            }
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    class FishPlayer {
+        constructor(colorKey) {
+            this.x = 0; this.y = FLOOR_DEPTH - 100;
+            this.vx = 0; this.vy = 0;
+            this.colorKey = colorKey;
+            this.color = COLORS[colorKey];
+            this.dir = 1; 
+            this.food = 0;
+            this.eatingTimer = 0;
+            this.w = 30; this.h = 20;
+            this.dead = false;
+            this.sprite = FISH_TEMPLATES[0]; 
+        }
+
+        update() {
+            if(this.dead) {
+                this.vy += 0.1; this.y += this.vy;
+                if(this.y > FLOOR_DEPTH - this.h) this.y = FLOOR_DEPTH - this.h;
+                return;
+            }
+
+            let ax = 0, ay = 0;
+            const speed = 0.4;
+            if(keys.up) ay -= speed;
+            if(keys.down) ay += speed;
+            if(keys.left) ax -= speed;
+            if(keys.right) ax += speed;
+
+            this.vx += ax; this.vy += ay;
+            this.vx *= 0.92; this.vy *= 0.92; 
+            this.x += this.vx; this.y += this.vy;
+
+            if(this.vx > 0.1) this.dir = 1;
+            else if(this.vx < -0.1) this.dir = -1;
+
+            if(this.y < WATER_SURFACE) {
+                this.y = WATER_SURFACE; this.vy = 0;
+                if(Math.random() < 0.2) particles.push(new Particle(this.x, this.y, (Math.random()-0.5)*2, Math.random()*2, 'white', 30, 1));
+            }
+            if(this.y > FLOOR_DEPTH - this.h) {
+                this.y = FLOOR_DEPTH - this.h; this.vy = 0;
+                if(Math.abs(this.vx) > 0.5 && Math.random() < 0.3) {
+                    particles.push(new Particle(this.x, this.y+this.h, (Math.random()-0.5)*2, -Math.random()*2, '#e0c879', 20, 2));
+                }
+            }
+            this.handleEating();
+        }
+
+        handleEating() {
+            let eating = false;
+            let cx = Math.floor(this.x / CHUNK_SIZE);
+            
+            for(let i = cx - 1; i <= cx + 1; i++) {
+                let chunk = chunks.get(i);
+                if(!chunk) continue;
+
+                for(let fIdx = 0; fIdx < chunk.food.length; fIdx++) {
+                    let f = chunk.food[fIdx];
+                    if(f.colorKey !== this.colorKey) continue;
+
+                    let dx = this.x - f.x;
+                    let foodCenterY = f.y - (f.template.length * PIXEL_SIZE * 2) / 2;
+                    let dy = this.y - foodCenterY;
+                    let dist = Math.sqrt(dx*dx + dy*dy);
+
+                    if(dist < 70) {
+                        eating = true;
+                        this.vx *= 0.8; this.vy *= 0.8;
+                        
+                        if(frame % 10 === 0) {
+                            particles.push(new Particle(
+                                this.dir===1 ? this.x+this.w/2 : this.x-this.w/2, 
+                                this.y, (Math.random()-0.5)*2, (Math.random()-0.5)*2, this.color, 20, 1
+                            ));
+                        }
+
+                        this.eatingTimer++;
+                        if(this.eatingTimer >= 600) {
+                            this.food++;
+                            this.eatingTimer = 0;
+                            chunk.food.splice(fIdx, 1);
+                            document.getElementById('ui-food').innerText = this.food;
+                            if(this.food >= 10) triggerReproduction();
+                        }
+                        break;
+                    }
+                }
+                if(eating) break;
+            }
+            if(!eating) this.eatingTimer = 0;
+        }
+
+        draw() {
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            if(this.dir === -1) ctx.scale(-1, 1);
+
+            let s = PIXEL_SIZE * 1.2;
+            drawFishSprite(ctx, this.sprite, this.colorKey, 'grey', s, this.dir, 1);
+
+            if(this.eatingTimer > 0 && Math.floor(frame / 10) % 2 === 0) {
+                ctx.fillStyle = '#000';
+                ctx.fillRect((this.sprite[0].length*s)/2 - s*2, -s, s*2, s*2);
+            }
+            ctx.restore();
+
+            if(this.eatingTimer > 0) {
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.fillRect(this.x - 20, this.y - 30, 40, 6);
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(this.x - 20, this.y - 30, (this.eatingTimer/600)*40, 6);
+            }
+        }
+    }
+
+    class NPC {
+        constructor(x, y, speciesData) {
+            this.x = x; this.y = y;
+            this.vx = 0; this.vy = 0;
+            this.sp = speciesData;
+            this.dir = Math.random() > 0.5 ? 1 : -1;
+            this.timer = 0;
+            this.chaseTimer = 0;
+            this.alpha = 1.0;
+        }
+
+        update() {
+            let dx = player.x - this.x;
+            let dy = player.y - this.y;
+            let dist = Math.sqrt(dx*dx + dy*dy);
+            let b = this.sp.behavior;
+            this.alpha = 1.0; // Default reset
+            
+            if(dist < 700 && !player.dead && gameState === 'PLAY') {
+                sightedSpecies.add(this.sp.id);
+            }
+
+            if(gameState !== 'PLAY' || player.dead) {
+                this.wander();
+            } else {
+                // Specialized AI Behaviors
+                if(b === 'shark') {
+                    if(dist < 600) this.chaseTimer = 600;
+                    if(this.chaseTimer > 0) {
+                        this.chaseTimer--;
+                        let angle = Math.atan2(dy, dx);
+                        this.vx += Math.cos(angle) * 0.15;
+                        this.vy += Math.sin(angle) * 0.15;
+                        if(dist < 60) die(); 
+                    } else this.wander();
+                } 
+                else if(b === 'toxic') {
+                    this.wander();
+                    // Just touching it kills you
+                    if(dist < 40 && frame > 120) die(); 
+                }
+                else if(b === 'territorial') {
+                    if(dist < 150) this.chaseTimer = 100;
+                    if(this.chaseTimer > 0) {
+                        this.chaseTimer--;
+                        let angle = Math.atan2(dy, dx);
+                        this.vx += Math.cos(angle) * 0.2;
+                        this.vy += Math.sin(angle) * 0.2;
+                        if(dist < 35 && frame > 120) die(); 
+                    } else this.wander();
+                }
+                else if(b === 'follower') {
+                    if(dist < 400 && dist > 100) {
+                        let angle = Math.atan2(dy, dx);
+                        this.vx += Math.cos(angle) * 0.1;
+                        this.vy += Math.sin(angle) * 0.1;
+                    } else this.wander();
+                }
+                else if(b === 'skittish') {
+                    if(dist < 250) {
+                        let angle = Math.atan2(dy, dx);
+                        this.vx -= Math.cos(angle) * 0.4;
+                        this.vy -= Math.sin(angle) * 0.4;
+                    } else this.wander();
+                }
+                else if(b === 'thief') {
+                    let cx = Math.floor(this.x / CHUNK_SIZE);
+                    let chunk = chunks.get(cx);
+                    let foundFood = false;
+                    if(chunk && chunk.food.length > 0) {
+                        let f = chunk.food[0]; // Just target the first one in list
+                        let fdy = this.y - f.y;
+                        let fdx = this.x - f.x;
+                        let fdist = Math.sqrt(fdx*fdx + fdy*fdy);
+                        
+                        let angle = Math.atan2(-fdy, -fdx);
+                        this.vx += Math.cos(angle) * 0.1;
+                        this.vy += Math.sin(angle) * 0.1;
+                        
+                        if(fdist < 50) {
+                            chunk.food.shift(); // Eat it!
+                        }
+                        foundFood = true;
+                    }
+                    if(!foundFood) this.wander();
+                }
+                else if(b === 'camo') {
+                    this.wander();
+                    if(dist < 250) this.alpha = 0.2; // Become transparent
+                }
+                else if(b === 'erratic') {
+                    this.timer -= 2; // Changes direction twice as fast
+                    if(this.timer <= 0) {
+                        this.timer = 20 + Math.random()*30;
+                        this.vx += (Math.random()-0.5)*this.sp.speed * 4;
+                        this.vy += (Math.random()-0.5)*this.sp.speed * 4;
+                    }
+                }
+                else {
+                    this.wander(); // 'passive', 'bottom', 'surface'
+                }
+            }
+
+            // Apply specific depth bounds
+            if(b === 'bottom') {
+                if(this.y < FLOOR_DEPTH - 150) this.vy += 0.2;
+            } else if(b === 'surface') {
+                if(this.y > WATER_SURFACE + 150) this.vy -= 0.2;
+            }
+
+            let s = this.sp.speed;
+            if(this.vx > s) this.vx = s; if(this.vx < -s) this.vx = -s;
+            if(this.vy > s) this.vy = s; if(this.vy < -s) this.vy = -s;
+            
+            this.vx *= 0.98; this.vy *= 0.98;
+            this.x += this.vx; this.y += this.vy;
+
+            if(this.vx > 0.1) this.dir = 1; else if(this.vx < -0.1) this.dir = -1;
+
+            if(this.y < WATER_SURFACE + 20) this.vy += 0.3;
+            if(this.y > FLOOR_DEPTH - 20) this.vy -= 0.3;
+        }
+
+        wander() {
+            this.timer--;
+            if(this.timer <= 0) {
+                this.timer = 60 + Math.random()*120;
+                this.vx += (Math.random()-0.5)*this.sp.speed * 2;
+                this.vy += (Math.random()-0.5)*this.sp.speed * 2;
+            }
+        }
+
+        draw() {
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            if(this.dir === -1) ctx.scale(-1, 1);
+
+            let s = this.sp.size * PIXEL_SIZE;
+            drawFishSprite(ctx, this.sp.sprite, this.sp.color1, this.sp.color2, s, this.dir, this.alpha);
+
+            if(this.sp.behavior === 'shark' && this.chaseTimer > 0 && Math.floor(frame/10)%2===0) {
+                let wOff = (this.sp.sprite[0].length * s) / 2;
+                let hOff = (this.sp.sprite.length * s) / 2;
+                ctx.fillStyle = '#000';
+                ctx.fillRect(wOff - s*5, hOff - s*4, s*4, s*5);
+            }
+
+            ctx.restore();
+        }
+    }
+
+    function getChunk(cx) {
+        if(!chunks.has(cx)) {
+            let chunk = { x: cx, food: [] };
+            
+            let itemsCount = 6 + Math.floor(Math.random()*8);
+            for(let i=0; i<itemsCount; i++) {
+                let tIdx = Math.floor(Math.random()*FOOD_TEMPLATES.length);
+                let cKey = COLOR_KEYS[Math.floor(Math.random()*COLOR_KEYS.length)];
+                chunk.food.push({
+                    x: cx * CHUNK_SIZE + Math.random() * CHUNK_SIZE,
+                    y: FLOOR_DEPTH,
+                    template: FOOD_TEMPLATES[tIdx],
+                    colorKey: cKey,
+                    color: COLORS[cKey]
+                });
+            }
+
+            let npcCount = 6 + Math.floor(Math.random()*6);
+            for(let i=0; i<npcCount; i++) {
+                // 5% shark, else random 1-19
+                let spId = Math.random() < 0.05 ? 0 : 1 + Math.floor(Math.random()*(SPECIES_DB.length-1));
+                npcs.push(new NPC(
+                    cx * CHUNK_SIZE + Math.random() * CHUNK_SIZE,
+                    Math.random() * (FLOOR_DEPTH - WATER_SURFACE) + WATER_SURFACE,
+                    SPECIES_DB[spId]
+                ));
+            }
+            chunks.set(cx, chunk);
+        }
+        return chunks.get(cx);
+    }
+
+    function manageChunks() {
+        let cx = Math.floor(player.x / CHUNK_SIZE);
+        getChunk(cx); getChunk(cx-1); getChunk(cx+1); getChunk(cx-2); getChunk(cx+2);
+        
+        for(let key of chunks.keys()) {
+            if(Math.abs(key - cx) > 3) chunks.delete(key);
+        }
+        
+        for(let i=npcs.length-1; i>=0; i--) {
+            if(Math.abs(npcs[i].x - player.x) > CHUNK_SIZE * 3) npcs.splice(i, 1);
+        }
+    }
+
+    function drawBackground() {
+        let grad = ctx.createLinearGradient(0, Math.max(0, camera.y + WATER_SURFACE), 0, canvas.height);
+        grad.addColorStop(0, '#5cedff');
+        grad.addColorStop(1, '#0b4a78');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.translate(-camera.x + canvas.width/2, -camera.y + canvas.height/2);
+
+        if(Math.random() < 0.15) {
+            particles.push(new Particle(player.x + (Math.random()-0.5)*canvas.width, FLOOR_DEPTH, 0, -1 - Math.random()*2, 'rgba(255,255,255,0.4)', 300, Math.random()*3+1));
+        }
+
+        ctx.fillStyle = '#e0c879'; 
+        ctx.fillRect(player.x - canvas.width, FLOOR_DEPTH, canvas.width*2, 1000);
+        ctx.fillStyle = '#c4ab58';
+        for(let i=-20; i<20; i++) {
+            let px = Math.floor(player.x/200)*200 + i*200;
+            ctx.fillRect(px, FLOOR_DEPTH + 15, 30, 8);
+            ctx.fillRect(px+80, FLOOR_DEPTH + 40, 15, 8);
+        }
+
+        let cx = Math.floor(player.x / CHUNK_SIZE);
+        for(let i=cx-2; i<=cx+2; i++) {
+            let c = chunks.get(i);
+            if(!c) continue;
+            for(let f of c.food) {
+                let s = PIXEL_SIZE * 2;
+                let t = f.template;
+                ctx.fillStyle = f.color;
+                for(let r=0; r<t.length; r++) {
+                    for(let col=0; col<t[r].length; col++) {
+                        if(t[r][col] === '1') {
+                            let drawX = f.x + (col * s) - (t[r].length * s)/2;
+                            let drawY = f.y - (t.length * s) + (r * s);
+                            ctx.fillRect(drawX, drawY, s, s);
+                        } else if(t[r][col] === '0') {
+                            let drawX = f.x + (col * s) - (t[r].length * s)/2;
+                            let drawY = f.y - (t.length * s) + (r * s);
+                            ctx.fillStyle = '#000'; ctx.fillRect(drawX, drawY, s, s); ctx.fillStyle = f.color;
+                        }
+                    }
+                }
+            }
+        }
+
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.fillRect(player.x - canvas.width, WATER_SURFACE - 5, canvas.width*2, 5);
+
+        ctx.restore();
+    }
+
+    function startGame() {
+        document.getElementById('menu').classList.add('hidden');
+        document.getElementById('gameOver').classList.add('hidden');
+        document.getElementById('speciesScreen').classList.add('hidden');
+        document.getElementById('gameUI').classList.remove('hidden');
+        
+        generations = 1;
+        frame = 0; // reset frame for toxic invulnerability
+        document.getElementById('ui-gen').innerText = generations;
+        document.getElementById('ui-rec').innerText = recordGen;
+        document.getElementById('ui-food').innerText = '0';
+        
+        chunks.clear(); npcs = []; particles = []; sightedSpecies.clear();
+        player = new FishPlayer('white');
+        camera = {x: player.x, y: player.y};
+        
+        gameState = 'PLAY';
+    }
+
+    function triggerReproduction() {
+        gameState = 'EGG';
+        egg = { x: player.x, y: FLOOR_DEPTH - 10 };
+        document.getElementById('eggScreen').classList.remove('hidden');
+        document.getElementById('gameUI').classList.add('hidden');
+        eggTaps = 0;
+    }
+
+    function tapEgg() {
+        if(gameState !== 'EGG') return;
+        eggTaps++;
+        particles.push(new Particle(egg.x, egg.y, (Math.random()-0.5)*5, -Math.random()*5, 'white', 20, 2));
+        
+        if(eggTaps >= 5) {
+            generations++;
+            if(generations > recordGen) {
+                recordGen = generations;
+                localStorage.setItem('fishRecord', recordGen);
+            }
+            document.getElementById('ui-gen').innerText = generations;
+            document.getElementById('ui-rec').innerText = recordGen;
+            document.getElementById('ui-food').innerText = '0';
+
+            let newCol = COLOR_KEYS[Math.floor(Math.random()*COLOR_KEYS.length)];
+            let newPlayer = new FishPlayer(newCol);
+            newPlayer.sprite = FISH_TEMPLATES[Math.floor(Math.random()*FISH_TEMPLATES.length)];
+            newPlayer.x = egg.x; newPlayer.y = egg.y - 30;
+            player = newPlayer;
+            egg = null;
+
+            document.getElementById('eggScreen').classList.add('hidden');
+            document.getElementById('gameUI').classList.remove('hidden');
+            gameState = 'PLAY';
+        }
+    }
+
+    function die() {
+        player.dead = true;
+        gameState = 'DEAD';
+        setTimeout(() => {
+            document.getElementById('gameUI').classList.add('hidden');
+            document.getElementById('gameOver').classList.remove('hidden');
+        }, 2000);
+    }
+
+    function toMenu() {
+        document.getElementById('gameOver').classList.add('hidden');
+        document.getElementById('menu').classList.remove('hidden');
+        gameState = 'MENU';
+    }
+
+    function showSpecies() {
+        document.getElementById('gameOver').classList.add('hidden');
+        const sc = document.getElementById('speciesScreen');
+        sc.classList.remove('hidden');
+        const list = document.getElementById('s-list');
+        list.innerHTML = '';
+
+        if(sightedSpecies.size === 0) {
+            list.innerHTML = '<p style="font-size:16px;">No species sighted closely...</p>';
+        }
+
+        sightedSpecies.forEach(id => {
+            let sp = SPECIES_DB.find(s => s.id === id);
+            if(!sp) return;
+            
+            let card = document.createElement('div');
+            card.className = 'species-card';
+            
+            let c = document.createElement('canvas');
+            c.className = 'species-canvas';
+            c.width = 96; c.height = 96;
+            let cx = c.getContext('2d');
+            cx.imageSmoothingEnabled = false;
+            
+            let pxSize = 96 / Math.max(sp.sprite[0].length, sp.sprite.length);
+            for(let r=0; r<sp.sprite.length; r++) {
+                for(let col=0; col<sp.sprite[r].length; col++) {
+                    let char = sp.sprite[r][col];
+                    if(char === '1' || char === '3') { cx.fillStyle = COLORS[sp.color1] || sp.color1; cx.fillRect(col*pxSize, r*pxSize, pxSize, pxSize); }
+                    else if(char === '2') { cx.fillStyle = COLORS[sp.color2] || sp.color2; cx.fillRect(col*pxSize, r*pxSize, pxSize, pxSize); }
+                    else if(char === '0') { cx.fillStyle='black'; cx.fillRect(col*pxSize, r*pxSize, pxSize, pxSize); }
+                }
+            }
+
+            let info = document.createElement('div');
+            info.innerHTML = `<b style="color:${COLORS[sp.color1]||sp.color1}; font-size:14px;">${sp.name}</b><br><br>${sp.desc}`;
+            
+            card.appendChild(c);
+            card.appendChild(info);
+            list.appendChild(card);
+        });
+    }
+
+    function hideSpecies() {
+        document.getElementById('speciesScreen').classList.add('hidden');
+        document.getElementById('gameOver').classList.remove('hidden');
+    }
+
+    function loop() {
+        frame++;
+        
+        if(gameState === 'PLAY' || gameState === 'EGG' || gameState === 'DEAD') {
+            
+            if(gameState === 'PLAY' || gameState === 'DEAD') {
+                player.update();
+                camera.x += (player.x - camera.x) * 0.1;
+                camera.y += (player.y - camera.y) * 0.1;
+                manageChunks();
+            } else if (gameState === 'EGG') {
+                player.vy = -3; player.vx = 0;
+                player.y += player.vy;
+                camera.x += (egg.x - camera.x) * 0.1;
+                camera.y += (egg.y - camera.y) * 0.1;
+            }
+
+            npcs.forEach(n => n.update());
+
+            drawBackground();
+
+            ctx.save();
+            ctx.translate(-camera.x + canvas.width/2, -camera.y + canvas.height/2);
+
+            if(egg) {
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(egg.x - 8, egg.y - 12, 16, 20);
+                if(eggTaps > 0) {
+                    ctx.fillStyle = '#000';
+                    ctx.fillRect(egg.x - 4, egg.y - 6, 3, 8);
+                    if(eggTaps > 2) ctx.fillRect(egg.x + 2, egg.y, 6, 3);
+                }
+            }
+
+            npcs.forEach(n => n.draw());
+
+            if(player.y > WATER_SURFACE - 200) {
+                player.draw();
+            }
+
+            for(let i=particles.length-1; i>=0; i--) {
+                particles[i].update();
+                particles[i].draw();
+                if(particles[i].life <= 0) particles.splice(i, 1);
+            }
+
+            ctx.restore();
+            
+            if(gameState === 'DEAD') {
+                ctx.fillStyle = 'rgba(255,0,0,0.3)';
+                ctx.fillRect(0,0,canvas.width,canvas.height);
+            }
+        }
+
+        requestAnimationFrame(loop);
+    }
+
+    ctx.imageSmoothingEnabled = false;
+    requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
